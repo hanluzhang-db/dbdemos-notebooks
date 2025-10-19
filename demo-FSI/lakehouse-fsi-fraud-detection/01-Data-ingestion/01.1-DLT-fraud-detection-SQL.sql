@@ -73,9 +73,9 @@
 
 -- MAGIC %md-sandbox
 -- MAGIC
--- MAGIC ## Building a Delta Live Table pipeline to analyze and reduce fraud detection in real-time
+-- MAGIC ## Building a Spark Declarative Pipeline to analyze and reduce fraud detection in real-time
 -- MAGIC
--- MAGIC In this example, we'll implement a end 2 end DLT pipeline consuming our banking transactions information. We'll use the medaillon architecture but we could build star schema, data vault or any other modelisation.
+-- MAGIC In this example, we'll implement a end 2 end SDP pipeline consuming our banking transactions information. We'll use the medaillon architecture but we could build star schema, data vault or any other modelisation.
 -- MAGIC
 -- MAGIC We'll incrementally load new data with the autoloader and enrich this information.
 -- MAGIC
@@ -131,7 +131,7 @@
 -- COMMAND ----------
 
 -- DBTITLE 1,Ingest transactions
-CREATE STREAMING LIVE TABLE bronze_transactions 
+CREATE STREAMING TABLE bronze_transactions 
   COMMENT "Historical banking transaction to be trained on fraud detection"
 AS 
   SELECT * FROM cloud_files("/Volumes/main__build/dbdemos_fsi_fraud_detection/fraud_raw_data/transactions", "json", map("cloudFiles.maxFilesPerTrigger", "1", "cloudFiles.inferColumnTypes", "true"))
@@ -139,7 +139,7 @@ AS
 -- COMMAND ----------
 
 -- DBTITLE 1,Customers
-CREATE STREAMING LIVE TABLE banking_customers (
+CREATE STREAMING TABLE banking_customers (
   CONSTRAINT correct_schema EXPECT (_rescued_data IS NULL)
 )
 COMMENT "Customer data coming from csv files ingested in incremental with Auto Loader to support schema inference and evolution"
@@ -149,14 +149,14 @@ AS
 -- COMMAND ----------
 
 -- DBTITLE 1,Reference table
-CREATE STREAMING LIVE TABLE country_coordinates
+CREATE STREAMING TABLE country_coordinates
 AS 
   SELECT * FROM cloud_files("/Volumes/main__build/dbdemos_fsi_fraud_detection/fraud_raw_data/country_code", "csv")
 
 -- COMMAND ----------
 
 -- DBTITLE 1,Fraud report (labels for ML training)
-CREATE STREAMING LIVE TABLE fraud_reports
+CREATE STREAMING TABLE fraud_reports
 AS 
   SELECT * FROM cloud_files("/Volumes/main__build/dbdemos_fsi_fraud_detection/fraud_raw_data/fraud_report", "csv")
 
@@ -175,14 +175,14 @@ AS
 -- MAGIC
 -- MAGIC We're also adding an [expectation](https://docs.databricks.com/workflows/delta-live-tables/delta-live-tables-expectations.html) on different field to enforce and track our Data Quality. This will ensure that our dashboard are relevant and easily spot potential errors due to data anomaly.
 -- MAGIC
--- MAGIC For more advanced DLT capabilities run `dbdemos.install('dlt-loans')` or `dbdemos.install('dlt-cdc')` for CDC/SCDT2 example.
+-- MAGIC For more advanced SDP capabilities run `dbdemos.install('dlt-loans')` or `dbdemos.install('dlt-cdc')` for CDC/SCDT2 example.
 -- MAGIC
 -- MAGIC These tables are clean and ready to be used by the BI team!
 
 -- COMMAND ----------
 
 -- DBTITLE 1,Silver
-CREATE STREAMING LIVE TABLE silver_transactions (
+CREATE STREAMING TABLE silver_transactions (
   CONSTRAINT correct_data EXPECT (id IS NOT NULL),
   CONSTRAINT correct_customer_id EXPECT (customer_id IS NOT NULL)
 )
@@ -192,8 +192,8 @@ AS
           regexp_replace(countryDest, "\-\-", "") as countryDest, 
           newBalanceOrig - oldBalanceOrig as diffOrig, 
           newBalanceDest - oldBalanceDest as diffDest
-FROM STREAM(live.bronze_transactions) t
-  LEFT JOIN live.fraud_reports f using(id)
+FROM STREAM(bronze_transactions) t
+  LEFT JOIN fraud_reports f using(id)
 
 -- COMMAND ----------
 
@@ -209,7 +209,7 @@ FROM STREAM(live.bronze_transactions) t
 -- COMMAND ----------
 
 -- DBTITLE 1,Gold, ready for Data Scientists to consume
-CREATE LIVE TABLE gold_transactions (
+CREATE MATERIALIZED VIEW gold_transactions (
   CONSTRAINT amount_decent EXPECT (amount > 10)
 )
 AS 
@@ -217,10 +217,10 @@ AS
           boolean(coalesce(is_fraud, 0)) as is_fraud,
           o.alpha3_code as countryOrig, o.country as countryOrig_name, o.long_avg as countryLongOrig_long, o.lat_avg as countryLatOrig_lat,
           d.alpha3_code as countryDest, d.country as countryDest_name, d.long_avg as countryLongDest_long, d.lat_avg as countryLatDest_lat
-FROM live.silver_transactions t
-  INNER JOIN live.country_coordinates o ON t.countryOrig=o.alpha3_code 
-  INNER JOIN live.country_coordinates d ON t.countryDest=d.alpha3_code 
-  INNER JOIN live.banking_customers c ON c.id=t.customer_id 
+FROM silver_transactions t
+  INNER JOIN country_coordinates o ON t.countryOrig=o.alpha3_code 
+  INNER JOIN country_coordinates d ON t.countryDest=d.alpha3_code 
+  INNER JOIN banking_customers c ON c.id=t.customer_id 
 
 -- COMMAND ----------
 
@@ -230,7 +230,7 @@ FROM live.silver_transactions t
 -- MAGIC
 -- MAGIC The table is now ready for our Data Scientist to train a model detecting fraud risk.
 -- MAGIC
--- MAGIC Open the <a dbdemos-pipeline-id="dlt-fsi-fraud" href="#joblist/pipelines/a6ba1d12-74d7-4e2d-b9b7-ca53b655f39d" target="_blank">Fraud detection Delta Live Table pipeline</a> and click on start to visualize your lineage and consume the new data incrementally!
+-- MAGIC Open the <a dbdemos-pipeline-id="dlt-fsi-fraud" href="#joblist/pipelines/a6ba1d12-74d7-4e2d-b9b7-ca53b655f39d" target="_blank">Fraud detection Spark Declarative Pipeline</a> and click on start to visualize your lineage and consume the new data incrementally!
 
 -- COMMAND ----------
 
